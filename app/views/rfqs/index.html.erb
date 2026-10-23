@@ -1,0 +1,125 @@
+<h1>DIBBS RFQ Browser</h1>
+
+<%# Every change re-submits this GET form into the "results" frame (URL updated, search box keeps focus) %>
+<%= form_with url: root_path, method: :get,
+      data: { turbo_frame: "results", turbo_action: "advance", controller: "filters",
+              action: "input->filters#debounce change->filters#submit submit->filters#remember" } do |f| %>
+  <div class="search">
+    <%= f.search_field :q, value: params[:q], placeholder: "Solicitation, NSN (with or without dashes) or item name",
+          autofocus: true, autocomplete: "off", "aria-label": "Search RFQs" %>
+  </div>
+
+  <%# Keep the column sort when searching or filtering %>
+  <%= hidden_field_tag :sort, @sort, id: nil %>
+  <%= hidden_field_tag :dir, @dir, id: nil %>
+
+  <div class="filter-row">
+    <div class="filter" data-controller="tokens" data-tokens-name-value="fsc[]">
+      <label for="fsc_entry">FSC</label>
+      <div class="token-input">
+        <div class="tokens" data-tokens-target="list">
+          <% @fscs.each do |code| %><%= render "token", name: "fsc[]", value: code, label: code %><% end %>
+        </div>
+        <input type="text" id="fsc_entry" class="token-entry" placeholder="+ 4 digits" inputmode="numeric" maxlength="40" autocomplete="off"
+               data-tokens-target="entry" data-action="input->tokens#type keydown->tokens#key">
+      </div>
+      <div class="chips">
+        <% @top_fscs.each do |code, count| %>
+          <button type="button" class="chip" data-code="<%= code %>" data-tokens-target="pick" data-action="tokens#pickCode"
+                  title="<%= number_with_delimiter(count) %> open RFQs — add to filter"><%= code %></button>
+        <% end %>
+      </div>
+      <template data-tokens-target="template"><%= render "token", name: "", value: "", label: "" %></template>
+    </div>
+
+    <div class="filter" data-controller="tokens" data-tokens-name-value="set_aside[]">
+      <label for="set_aside_entry">Set-aside</label>
+      <div class="token-input">
+        <div class="tokens" data-tokens-target="list">
+          <% @set_asides.each do |code| %><%= render "token", name: "set_aside[]", value: code, label: Dibbs::RfqFile::SET_ASIDES[code] %><% end %>
+        </div>
+        <%# Small fixed "+" on the right; the placeholder option is what shows as "+" %>
+        <select id="set_aside_entry" class="token-add" title="Add set-aside" aria-label="Add set-aside"
+                data-tokens-target="entry" data-action="change->tokens#choose">
+          <option value="" hidden>+</option>
+          <%= options_for_select(Dibbs::RfqFile::SET_ASIDES.invert.to_a) %>
+        </select>
+      </div>
+      <template data-tokens-target="template"><%= render "token", name: "", value: "", label: "" %></template>
+    </div>
+
+    <div class="filter">
+      <label for="closing_within">Closing within</label>
+      <%= f.select :closing_within, options_for_select([ [ "Any time", "" ] ] + RfqsController::CLOSING_WITHIN.map { [ "#{_1} days", _1 ] }, @closing_within) %>
+    </div>
+
+    <div class="filter">
+      <label for="min_qty">Min qty</label>
+      <%= f.number_field :min_qty, value: @min_qty, min: 1, step: 1, class: "qty" %>
+    </div>
+
+    <div class="filter">
+      <label class="check"><%= f.check_box :include_closed, { checked: @include_closed }, "1", nil %> Include closed</label>
+    </div>
+  </div>
+<% end %>
+
+<%= turbo_frame_tag "results" do %>
+  <div class="summary">
+    <span>
+      <strong><%= number_with_delimiter(@total) %></strong> <%= [ ("matching" if @filtered), ("open" unless @include_closed), "RFQs" ].compact.join(" ") %>
+      <%= link_to "Clear filters", root_path, class: "clear", data: { turbo_frame: "_top" } if @filtered %>
+    </span>
+    <span>
+      Data as of <strong><%= @data_as_of&.strftime("%b %-d, %Y") || "—" %></strong>
+      <% if @sync&.failed? %>
+        · <span class="warn" title="<%= @sync.message %>">⚠ Last sync failed <%= time_ago_in_words(@sync.finished_at) %> ago</span>
+      <% elsif @sync %>
+        · last checked <%= time_ago_in_words(@sync.finished_at) %> ago
+      <% end %>
+    </span>
+  </div>
+
+  <% if @rfqs.any? %>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th><%= sort_header "Solicitation", "solicitation" %></th>
+            <th><%= sort_header "NSN / Part #", "nsn" %></th>
+            <th><%= sort_header "Item", "item" %></th>
+            <th class="num"><%= sort_header "Qty", "quantity" %></th>
+            <th><%= sort_header "Set-aside", "set_aside" %></th>
+            <th><%= sort_header "Posted", "posted" %></th>
+            <th><%= sort_header "Closes", "closes" %></th>
+            <th><%= sort_header "Buyer", "buyer" %></th>
+          </tr>
+        </thead>
+        <tbody>
+          <% @rfqs.each do |rfq| %>
+            <tr>
+              <td class="mono"><%= rfq_link(rfq) %></td>
+              <td class="mono"><%= format_nsn(rfq.nsn) %></td>
+              <td><%= item_name(rfq) %></td>
+              <td class="num"><%= number_with_delimiter(rfq.quantity) %> <span class="muted"><%= rfq.unit %></span></td>
+              <td><%= set_aside_tag(rfq) %></td>
+              <td class="mono"><%= short_date(rfq.posted_on) %></td>
+              <td class="mono"><%= short_date(rfq.return_by) %> <%= closes_in(rfq.return_by) %></td>
+              <td class="mono muted"><%= rfq.buyer %></td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+
+    <nav class="pager">
+      <%= link_to "← Prev", request.query_parameters.merge(page: @page - 1), data: { turbo_frame: "_top" } if @page > 1 %>
+      <span>Page <%= @page %> of <%= @last_page %></span>
+      <%= link_to "Next →", request.query_parameters.merge(page: @page + 1), data: { turbo_frame: "_top" } if @page < @last_page %>
+    </nav>
+  <% elsif @data_as_of %>
+    <p class="muted">No RFQs match these filters. <%= link_to "Clear filters", root_path, data: { turbo_frame: "_top" } %></p>
+  <% else %>
+    <p class="muted">No RFQs yet. Run <code>bin/rails dibbs:import</code>.</p>
+  <% end %>
+<% end %>

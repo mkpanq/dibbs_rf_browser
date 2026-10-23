@@ -1,0 +1,15 @@
+{
+  "ignored_warnings": [
+    {
+      "warning_type": "SQL Injection",
+      "warning_code": 0,
+      "fingerprint": "d0201e47c187a683450ede5e5e059986fba0e26ae7fc5f0f96cd74b02e1688c1",
+      "check_name": "SQL",
+      "message": "Possible SQL injection",
+      "file": "app/models/dibbs/importer.rb",
+      "line": 60,
+      "note": "False positive: SQL is built only from the hard-coded DATA_COLUMNS constant, no user input."
+    }
+  ],
+  "brakeman_version": "8.1.0"
+}
